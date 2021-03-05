@@ -1,0 +1,217 @@
+classdef dstC
+    properties
+        figdata
+        figfit
+        figpdf
+        data
+        type
+        fig
+        pdfFun
+        fitFun
+        rndFun
+        support
+        theta
+        params
+        pdf
+        hat %fit
+        boot %fit_boot
+        gof
+        bins
+        %{
+        WANTED
+        entropy
+        mgf
+        %}
+    end
+    methods
+        function obj = dstC(type,varargin)
+            obj.theta=varargin;
+        %ddst(type)
+            switch type
+            case 'norm'
+                % XXX need to handle known params
+                obj.type='Normal';
+                obj.pdfFun=@(X,mu,sigma) normpdf(X,mu,sigma);
+                obj.fitFun=@(X) fit_norm(X);
+                obj.rndFun=@(mu,sigma,sz) normrnd(mu,sigma,sz);
+                obj.params={'mu','sigma'};
+                obj.support=[-inf,inf];
+            case 'wald'
+                % XXX need to handle known params
+                obj.type='Wald';
+                obj.pdfFun=@(X,mu,lambda) waldpdf(X,mu,lambda);
+                obj.fitFun=@(X) fit_wald(X);
+                obj.rndFun=@(mu,lambda,sz) wrand(mu,lambda,sz); % XXX
+                obj.params={'mu','lambda'};
+                obj.support=[0,inf];
+            case 'laplace'
+                % XXX need to handle known params
+                obj.type='Laplace';
+                obj.pdfFun=@(X,mu,b) laplacepdf(X,mu,b);
+                obj.fitFun=@(X) fit_laplace(X);
+                obj.rndFun=@(mu,b,sz) lrand(mu,b,sz); % XXX
+                obj.params={'mu','b'};
+                obj.support=[-inf,inf];
+            case 'cauchy'
+                % XXX need to handle known params
+                obj.type='Cauchy';
+                obj.pdfFun=@(X,x0,gamma) cauchypdf(X,x0,gamma);
+                obj.fitFun=@(X) cauchyfit(X); % XXX NOT MINE
+                obj.rndFun=@(x0,gamma,sz) cauchyrnd(X,gamma,sz);
+                obj.params={'mu','x0','gamma'};
+                obj.support=[-inf,inf];
+            case 'exp'
+                obj.pdfFun=@(X,beta) expaltpdf(X,beta);
+                obj.fitFun=@(X) fit_expalt(X);
+                obj.rndFun=@(beta,sz) ernd(beta,sz);
+                obj.params={'beta'};
+                obj.support=[0,inf];
+            %{
+            WANTED
+            beta
+            logit-normal
+            uniform
+            chi
+            chi2
+            gamma | part numeric
+            gen gamma
+            pareto
+            log normal | easy
+            gen normal | numeric
+            logistic | numeric
+            students t distribution
+            gig | numeric
+            logistcdf
+            %}
+            end
+
+        end
+        function rn = rnd(obj,sz)
+            if ~isvar('sz')
+                sz=1;
+            end
+            rn=obj.rndFun(obj.theta{:},sz);
+        end
+        function obj = get_data(obj,num)
+            if ~isvar('sz')
+                num=1000;
+            end
+            sigma=3;
+            noise=rand(num,1)*sigma;
+            obj.data = obj.rnd([num,1])+noise;
+        end
+
+        function obj = get_fit(obj,data)
+            if isvar('data')
+                obj.data=data;
+            elseif isempty(obj.data)
+                obj=obj.get_data;
+            end
+            % XXX
+            n=nargout(@fit_norm);
+            [varargout{1:n}]=obj.fitFun(obj.data);
+            obj.hat=varargout;
+        end
+
+        function obj = get_boot_fit(obj,nBoot,prcntChoose)
+        %get_boot_fit(data,nBoot,prcntChoose,vargParams)
+            if ~isvar('nBoot')
+                nBoot=1000;
+            end
+            if ~isvar('prcntCHoose')
+                prcntChoose=.5
+            end
+            obj.boot=struct();
+            obj.boot.nBoot=nBoot;
+            obj.boot.prcntChoose=prcntChoose;
+            obj.boot.hats=zeros(nBoot,narargin);
+            for b = 1:nBoot
+                x=datasample(obj.data,numel(obj.data),'Replace',true);
+                obj.fit(x,obj.theta{:});
+                obj.boot.hats(b,:)=obj.hat;
+            end
+            obj.fit(obj.data,obj.theta{:});
+
+            obj.boot.hats=obj.hats';
+            obj.boot.mean=mean(obj.boot.hats,2);
+            obj.boot.se=std(obj.boot.hats,0,2);
+            oneSide=(1-prcntChoose)/2;
+            obj.boot.ci=quantile(obj.boot.mean,[oneSide, 1-oneSide]);
+        end
+
+        function obj = plot_boot(obj,Opts)
+        %plot_boot(Opts)
+            Opts.figNum=nfn;
+            obj.boot.figNum=Opts.figNum;
+            obj.boot.fig=figure(Opts.figNum);
+            obj.boot.figOpts=Opts;
+            n=length(obj.boot.hats);
+            for i = 1:n
+                subPlot([1 n],1,n)
+                plot_histograms(obj.boot.hats,[],[],Opts,0);
+                Opts.title=['Bootstrapped ' obj.params{i}];
+                gaxis(Opts);
+            end
+            gfigure(Opts)
+        end
+        function obj = plot_pdf(obj)
+            if isempty(obj.pdf)
+                obj=obj.get_pdf
+            end
+            obj.figpdf=figure;
+            plot(obj.bins,obj.pdf,'k')
+            axis square
+            formatFigure('X','P',['PDF'  newline obj.type])
+        end
+
+        function obj = plot_data(obj)
+            if isempty(obj.pdf)
+                obj=obj.get_data
+            end
+            obj.figdata=figure;
+            [cnt,bins]=hist(obj.data);
+            bar(bins,cnt)
+            axis square
+            formatFigure('X','P',['Data' newline obj.type])
+        end
+
+        function obj = get_pdf(obj,bins,theta)
+        %get_pdf(bins)
+            if ~isvar('bins') && isempty(obj.bins)
+                obj.bins=linspace(obj.theta{1}-10,obj.theta{1}+10,1000);
+            elseif isvar('bins')
+                obj.bins=bins;
+            end
+            if ~isvar('theta')
+                theta=obj.theta;
+            end
+            obj.pdf=obj.pdfFun(obj.bins,theta{:});
+        end
+
+        function obj = plot_fit(obj)
+            obj.figdata=figure;
+            O=obj.get_pdf([],obj.hat);
+            plot(O.bins,O.pdf,'k')
+            formatFigure('X','P',obj.type);
+        end
+
+        function obj = get_g(obj)
+        %get_g(data)
+            pe=obj.pdfFun(obj.data,obj.theta{:});
+            obj.gof.g=2*sum(obj.data.*log(obj.data./pe));
+        end
+
+        function obj = get_chi2(obj)
+        %get_chi2(data)
+            pe=obj.pdfFun(obj.data,obj.theta{:});
+            obj.gof.chisq=sum((obj.data-pe).^2./pe);
+        end
+
+        function obj = gof_dist(obj)
+        %gof(data)
+            obj.get_chi2
+            obj.get_g
+        end
+
+    end
+end

@@ -1,0 +1,6 @@
+function [rms,corr,E,H]=GLCMparser(GO)
+    rms=GO.Contrast;
+    corr=GO.Correlation;
+    E=GO.Correlation;
+    H=GO.Correlation;
+end
